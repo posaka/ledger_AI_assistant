@@ -1,0 +1,142 @@
+########################################
+# OS
+########################################
+.DS_Store
+Thumbs.db
+desktop.ini
+
+########################################
+# Environment & Secrets
+########################################
+.env
+.env.local
+.env.*.local
+
+########################################
+# Project data (do not commit)
+########################################
+chat_history.jsonl
+chroma_db/
+ledger.db
+ledger.db-*
+checkpoints.db
+checkpoints.db-*
+.streamlit/secrets.toml
+nohup.out
+
+########################################
+# Python
+########################################
+__pycache__/
+*.py[cod]
+*$py.class
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.python-version
+
+# C extensions
+*.so
+
+########################################
+# Build / Packaging
+########################################
+.Python
+build/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+.pdm.toml
+.pdm-python
+.pdm-build/
+__pypackages__/
+
+########################################
+# Logs
+########################################
+*.log
+pip-log.txt
+pip-delete-this-directory.txt
+
+########################################
+# Tests / Coverage
+########################################
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+########################################
+# Docs / Sites
+########################################
+docs/_build/
+/site
+
+########################################
+# Notebooks / IPython
+########################################
+.ipynb_checkpoints
+profile_default/
+ipython_config.py
+
+########################################
+# Framework caches
+########################################
+instance/
+.webassets-cache
+.scrapy
+
+########################################
+# Static analyzers
+########################################
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+cython_debug/
+
+########################################
+# IDE / Editors
+########################################
+.vscode/
+.idea/
+.spyderproject
+.spyproject
+.ropeproject
+
+########################################
+# PyInstaller
+########################################
+*.manifest
+*.spec
+
+########################################
+# Custom (project-specific)
+########################################
+*.docx
+drawpng.py
