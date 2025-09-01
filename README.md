@@ -33,7 +33,7 @@ uv sync
 3) 运行（含两步快速测试与图可视化）
 
 ```bash
-uv run -m src.agents.expenseTrackerAgent  # main agent
+uv run -m src.agents.expense_tracker_agent  # main agent
 uv run -m src.agents.utils.rag_tool  # create vector_db
 
 ```
