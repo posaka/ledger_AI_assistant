@@ -33,7 +33,9 @@ uv sync
 3) 运行（含两步快速测试与图可视化）
 
 ```bash
-uv run -m src.agents.expenseTrackerAgent
+uv run -m src.agents.expenseTrackerAgent  # main agent
+uv run -m src.agents.utils.rag_tool  # create vector_db
+
 ```
 
 提示：本项目的结构化输出已使用 function calling，兼容较旧的 Azure API 版本。若你需要使用 json_schema，请把 `AZURE_OPENAI_API_VERSION` 升级到 `2024-08-01-preview` 或更新版本。

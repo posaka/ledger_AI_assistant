@@ -1,7 +1,7 @@
 from langchain_community.document_loaders import JSONLoader
 from langchain_core.documents import Document
 from langchain_chroma import Chroma
-from langchain.embeddings import HuggingFaceEmbeddings
+from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.tools.retriever import create_retriever_tool
 from typing import List
 import os

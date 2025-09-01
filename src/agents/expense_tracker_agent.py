@@ -4,10 +4,10 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, MessagesState, StateGraph, START
 from langgraph.prebuilt import ToolNode, tools_condition
 from core import get_model, settings
-from agents.internal.context import assemble_context
-from agents.internal.chat_log import append_msg
-from agents.internal.rag_tool import get_retriever_tool
-from agents.internal.db_repo import get_db
+from agents.utils.context import assemble_context
+from agents.utils.chat_log import append_msg
+from agents.utils.rag_tool import get_retriever_tool
+from agents.utils.db_repo import get_db
 from langchain_core.runnables import RunnableConfig, RunnableLambda, RunnableSerializable
 from pydantic import BaseModel, Field, ConfigDict, confloat
 import datetime as dt
@@ -35,11 +35,11 @@ class DBResult(TypedDict, total=False):
 class AgentState(MessagesState):
     intent: str | None  # 意图
     parsed: dict | None  # 解析结果
-    awaiting: Optional[Literal["fill"]] = None  # 等待填充状态
-    pending_fields: Optional[list[str]] = None  # 待填充字段
-    draft: Optional[dict] = None  # 信息不完整的草稿
-    validated: Optional[bool] = None  # 是否验证通过
-    db_result: Optional[DBResult] = None  # 数据库写入结果
+    awaiting: Optional[Literal["fill"]]  # 等待填充状态
+    pending_fields: Optional[list[str]]  # 待填充字段
+    draft: Optional[dict]  # 信息不完整的草稿
+    validated: Optional[bool]  # 是否验证通过
+    db_result: Optional[DBResult]  # 数据库写入结果
 
 
 # 工具
