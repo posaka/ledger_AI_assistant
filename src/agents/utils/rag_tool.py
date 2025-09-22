@@ -1,7 +1,7 @@
 from langchain_community.document_loaders import JSONLoader
 from langchain_core.documents import Document
 from langchain_chroma import Chroma
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain.tools.retriever import create_retriever_tool
 from typing import List
 import os
@@ -48,7 +48,7 @@ def get_retriever_tool(persist_directory, collection_name, embedding=HuggingFace
     )
     retriever = vectorstore.as_retriever(
         search_type="similarity",
-        search_kwargs={"k": 5}  # K is the amount of chunks to return
+        search_kwargs={"k": 3}  # K is the amount of chunks to return
     )
     retriever_tool = create_retriever_tool(
         retriever=retriever,
@@ -223,7 +223,7 @@ def window_lines(
 
 if __name__ == "__main__":
     vs = create_vector_db(
-        jsonl_path="chat_session.jsonl",
+        jsonl_path="chat_history.jsonl",
         persist_directory="chroma_db",
         collection_name="chat_history"
     )

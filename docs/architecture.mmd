@@ -1,0 +1,63 @@
+flowchart LR
+  %% ===== CLI 入口 =====
+  subgraph CLI
+    U[用户 / 命令行]
+  end
+
+  U --> AG[LangGraph 智能体 app]
+
+  %% ===== Agent 工作流 =====
+  subgraph Agent[Agent 工作流（src/agents/expense_tracker_agent.py）]
+    EN[entry: 记录原始消息<br/>append_msg -> chat_history.jsonl]
+    CL[classify: 意图分类<br/>log_expense / related_chat / other]
+    EX[extract: 信息抽取<br/>item / amount 等]
+    VA[validate: 校验与归一化<br/>时间 ISO 到分钟 / 金额转分]
+    HF[handle_fill: 缺槽追问/合并<br/>根据 draft + pending 决策]
+    WD[write_db: 入库]
+    RS[respond: 生成对用户可见回复<br/>可触发工具调用]
+    TN[tools: 工具节点<br/>调用 RAG 检索等]
+  end
+
+  AG --> EN
+  EN -->|awaiting=fill?| HF
+  EN --> CL
+  CL -->|log_expense| EX
+  CL -->|related_chat / other| RS
+  EX --> VA
+  VA -->|通过| WD
+  VA -->|缺失| RS
+  WD --> RS
+  RS -->|需要工具| TN
+  TN --> RS
+
+  %% ===== Core 层 =====
+  subgraph Core[核心能力（src/core）]
+    LLM[get_model: 统一构造 LLM<br/>（流式 / 结构化输出）]
+    PV[OpenAI / Azure / DeepSeek / Anthropic / Google / Groq / AWS / Ollama / Fake]
+    ST[settings: 配置加载与校验<br/>.env -> pydantic]
+    LLM --> PV
+  end
+
+  Agent -.-> LLM
+  Agent -.-> ST
+
+  %% ===== 存储/数据 =====
+  subgraph Storage[存储 / 数据]
+    DB[SQLite ledger.db 或 MySQL<br/>src/agents/utils/db_repo.py]
+    LOG[chat_history.jsonl<br/>对话日志]
+    CH[Chroma 向量库<br/>chroma_db / chat_history]
+  end
+
+  WD --> DB
+  EN --> LOG
+
+  %% ===== RAG 子系统 =====
+  subgraph RAG[历史检索（src/agents/utils/rag_tool.py）]
+    RT[chat_history_retriever 工具]
+    BLD[create_vector_db 构建 / 更新向量库]
+    RT --> CH
+    BLD --> CH
+    LOG --> BLD
+  end
+
+  RS --> RT

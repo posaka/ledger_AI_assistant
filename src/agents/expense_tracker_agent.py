@@ -293,6 +293,7 @@ FINALIZE_SYS = """
    - 只就 state_snapshot.pending_fields 追问（单句，15~40字，举1个示例，口语自然；不要列表/多段）。
    - 语气可爱一点
 4) 若 state_snapshot.intent == "related_chat":
+   - 必须查询历史消息！！！
    - 必须构造 tool_call
    - 必须调用 chat_history_retriever 在历史记录中查询；把用户问题里的关键词作为 query（若出现引号内词，优先用引号内的词）。
    - 回复用户的问题，展示关怀，然后适当抛出新的疑问（比如“那今天呢”，”那个哑铃的使用情况如何？”）
@@ -344,7 +345,7 @@ def respond(state: AgentState, config: RunnableConfig) -> AgentState:
             tool_call_id=tool_call_id,
             content=json.dumps(snapshot, ensure_ascii=False),
         ),
-        HumanMessage(content="请基于以上历史与状态，生成给用户看的最终一句回复。")
+        HumanMessage(content="请基于以上历史与状态，查询历史消息，生成给用户看的最终一句回复。")
     ]
 
     try:
