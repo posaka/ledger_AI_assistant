@@ -7,6 +7,11 @@ from core import get_model, settings
 from agents.utils.context import assemble_context
 from agents.utils.chat_log import append_msg
 from agents.utils.rag_tool import get_retriever_tool
+from agents.utils.langmem_tools import (
+    get_inmemory_store as _get_mem_store,
+    create_manage_memory_tool as _create_manage_memory_tool,
+    create_search_memory_tool as _create_search_memory_tool,
+)
 from agents.utils.db_repo import get_db
 from langchain_core.runnables import RunnableConfig, RunnableLambda, RunnableSerializable
 from pydantic import BaseModel, Field, ConfigDict, confloat
@@ -43,8 +48,16 @@ class AgentState(MessagesState):
 
 
 # 工具
-rag_retriever = get_retriever_tool(persist_directory="chroma_db", collection_name="chat_history")  # RAG 检索工具
-tools = [rag_retriever]
+# rag_retriever = get_retriever_tool(persist_directory="chroma_db", collection_name="chat_history")  # RAG 检索工具（测试时暂不启用）
+
+# LangMem：单一命名空间 + InMemoryStore（可后续替换为 Postgres）
+_NAMESPACE = ("memories",)
+_MEM_STORE = _get_mem_store()
+_manage_mem_tool = _create_manage_memory_tool(namespace=_NAMESPACE)
+_search_mem_tool = _create_search_memory_tool(namespace=_NAMESPACE)
+
+# 仅保留 LangMem 工具，便于测试自然调用 _search_mem_tool
+tools = [_manage_mem_tool, _search_mem_tool]
 tool_node = ToolNode(tools)
 
 
@@ -75,8 +88,8 @@ class IntentOut(BaseModel):
         description="""
         用户意图说话内容判断。
         1. 如果是新的可入账的收支类描述，如“花了/买了/收入/转账/吃了”-> log_expense；
-        2. 用户仍在讨论已经记录过的消费内容，且并没有修改意图。related_chat=是（如“我想聊聊这笔开销”，“我过去三天买早饭花了多少钱”）；
-        3. other=否或不确定，与消费记账没有关系
+        2. 用户仍在讨论已经记录过的消费内容，且并没有修改意图；或者任何和用户画像有关的内容。related_chat=是（如“我想聊聊这笔开销”，“我过去三天买早饭花了多少钱”）；
+        3. other谨慎使用，一般不确定的即归为2 related_chat。
         """
     )
 
@@ -97,6 +110,42 @@ def classify_intent(state: AgentState, config: RunnableConfig) -> AgentState:
 # 条件函数，判断是否为可记账的消费/收入类表述
 def is_log_expense(state: AgentState) -> bool:
     return state.get("intent") == "log_expense"
+
+
+# —— Related Chat 专用系统提示 ——
+RELATED_CHAT_SYS = """
+你是记账助手。用户正在询问与历史有关的问题（如过去的花费、已记录的信息、偏好等）。
+请先调用已注入的历史检索类工具获取相关片段，再基于检索结果用一条简洁自然的中文回答；如合适，附带1条关怀式追问。
+要求：
+- 先检索再作答；可以调用一个或多个检索工具（按工具自身说明使用）。
+- 当用户问题包含引号内容时，优先把引号内词作为检索关键词。
+- 输出仅一条消息，不要暴露内部术语或工具细节。
+"""
+
+
+def route_after_classify(state: AgentState) -> str:
+    intent = state.get("intent")
+    if intent == "log_expense":
+        return "extract"
+    if intent == "related_chat":
+        return "respond_related"
+    return "respond"
+
+
+def respond_related(state: AgentState, config: RunnableConfig) -> AgentState:
+    """
+    专门处理 related_chat：让 LLM 自主调用检索工具并组织回答。
+    """
+    llm = get_model(config["configurable"].get("model", settings.DEFAULT_MODEL))
+    llm = llm.bind_tools(tools)
+
+    msgs: list[BaseMessage] = [
+        SystemMessage(content=RELATED_CHAT_SYS),
+        *assemble_context(state=state, window_strategy="turns", window_turns=6, include_system=False),
+    ]
+
+    ai = llm.invoke(msgs)
+    return {"messages": [ai]}
 
 # 信息提取模型与提示词
 class ExtractOut(BaseModel):
@@ -519,6 +568,7 @@ graph.add_node("validate", validate_normalize)
 graph.add_node("write_db", write_db)
 graph.add_node("handle_fill", handle_fill)
 graph.add_node("respond", respond)
+graph.add_node("respond_related", respond_related)
 graph.add_node("tools", tool_node)
 
 
@@ -534,10 +584,11 @@ graph.add_conditional_edges(
 )
 graph.add_conditional_edges(
     "classify",
-    is_log_expense,
+    route_after_classify,
     {
-        True: "extract",
-        False: "respond"
+        "extract": "extract",
+        "respond_related": "respond_related",
+        "respond": "respond",
     }
 )
 graph.add_edge("extract", "validate")
@@ -562,9 +613,17 @@ graph.add_conditional_edges(
 )
 graph.add_edge("tools", "respond")
 
-app = graph.compile(checkpointer=MemorySaver())
+# 相关聊天专用的工具回路，避免影响既有 respond 工具流
+tool_node_related = ToolNode(tools)
+graph.add_node("tools_related", tool_node_related)
+graph.add_conditional_edges(
+    "respond_related",
+    tools_condition,
+    {"tools": "tools_related", END: END},
+)
+graph.add_edge("tools_related", "respond_related")
 
-
+app = graph.compile(checkpointer=MemorySaver(), store=_MEM_STORE)
 
 
 # ======== CLI & 快速测试 ========
@@ -584,12 +643,14 @@ def _print_last_ai(state_out):
     print(last_ai.content if last_ai else "(未返回 AI 消息)")
 
 if __name__ == "__main__":
-    from draw_graph import draw_graph
-    draw_graph(app)
 
 
     # 1) 编译图并启用内存检查点（多轮需要 thread_id 保持一致）
-    app = graph.compile(checkpointer=MemorySaver())
+    app = graph.compile(checkpointer=MemorySaver(), store=_MEM_STORE)
+    
+    from draw_graph import draw_graph
+    draw_graph(app)
+
 
     # 2) 快速双步测试（缺金额 → 补金额 → 入库）
     print(">>> 快速测试：缺金额 → 补金额")
