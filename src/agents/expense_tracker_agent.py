@@ -3,15 +3,12 @@ from langchain_core.messages import AIMessage, SystemMessage, HumanMessage, Base
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, MessagesState, StateGraph, START
 from langgraph.prebuilt import ToolNode, tools_condition
+from langmem import create_manage_memory_tool, create_search_memory_tool
 from core import get_model, settings
 from agents.utils.context import assemble_context
 from agents.utils.chat_log import append_msg
 from agents.utils.rag_tool import get_retriever_tool
-from agents.utils.langmem_tools import (
-    get_inmemory_store as _get_mem_store,
-    create_manage_memory_tool as _create_manage_memory_tool,
-    create_search_memory_tool as _create_search_memory_tool,
-)
+from agents.utils.store import get_store
 from agents.utils.db_repo import get_db
 from langchain_core.runnables import RunnableConfig, RunnableLambda, RunnableSerializable
 from pydantic import BaseModel, Field, ConfigDict, confloat
@@ -25,8 +22,8 @@ load_dotenv()  # 读取 .env
 DB = get_db()
 DB.init()
 
-
-
+# 持久化键值对存储（按环境 STORE_DIALECT 切换）
+store = get_store()
 
 
 
@@ -50,14 +47,13 @@ class AgentState(MessagesState):
 # 工具
 # rag_retriever = get_retriever_tool(persist_directory="chroma_db", collection_name="chat_history")  # RAG 检索工具（测试时暂不启用）
 
-# LangMem：单一命名空间 + InMemoryStore（可后续替换为 Postgres）
+# LangMem
 _NAMESPACE = ("memories",)
-_MEM_STORE = _get_mem_store()
-_manage_mem_tool = _create_manage_memory_tool(namespace=_NAMESPACE)
-_search_mem_tool = _create_search_memory_tool(namespace=_NAMESPACE)
+manage_mem_tool = create_manage_memory_tool(namespace=_NAMESPACE)
+search_mem_tool = create_search_memory_tool(namespace=_NAMESPACE)
 
 # 仅保留 LangMem 工具，便于测试自然调用 _search_mem_tool
-tools = [_manage_mem_tool, _search_mem_tool]
+tools = [manage_mem_tool, search_mem_tool]
 tool_node = ToolNode(tools)
 
 
@@ -99,6 +95,7 @@ def classify_intent(state: AgentState, config: RunnableConfig) -> AgentState:
     llm_struct = llm.with_structured_output(IntentOut)
     user_text = next(m for m in reversed(state["messages"]) if isinstance(m, HumanMessage)).content
     result: IntentOut = llm_struct.invoke([SystemMessage(content=classify_instructions),
+                                           *assemble_context(state=state, window_strategy="turns", window_turns=6, include_system=False),
                                            HumanMessage(content=user_text)])
     # 可选：把结果也记录到AI消息里（便于可观测）
     ai = AIMessage(content=f"intent={result.intent}")
@@ -623,7 +620,7 @@ graph.add_conditional_edges(
 )
 graph.add_edge("tools_related", "respond_related")
 
-app = graph.compile(checkpointer=MemorySaver(), store=_MEM_STORE)
+app = graph.compile(checkpointer=MemorySaver(), store=store)
 
 
 # ======== CLI & 快速测试 ========
@@ -644,10 +641,7 @@ def _print_last_ai(state_out):
 
 if __name__ == "__main__":
 
-
-    # 1) 编译图并启用内存检查点（多轮需要 thread_id 保持一致）
-    app = graph.compile(checkpointer=MemorySaver(), store=_MEM_STORE)
-    
+    # 1) 可视化图结构
     from draw_graph import draw_graph
     draw_graph(app)
 

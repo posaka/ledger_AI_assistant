@@ -14,7 +14,8 @@ AZURE_OPENAI_DEPLOYMENT_MAP={"gpt-4o":"<你的4o部署名>", "gpt-4o-mini":"<你
 # 方案 B：OpenAI（可选，若你用官方 OpenAI）
 # OPENAI_API_KEY=sk-...
 
-# 数据库（可选）— 默认使用 SQLite（无需配置）。如用 MySQL：
+# 数据库（可选）— 默认使用 SQLite（无需配置）
+# 若写入交易信息选择 MySQL：
 # DB_DIALECT=mysql
 # MYSQL_HOST=127.0.0.1
 # MYSQL_PORT=3306
@@ -22,6 +23,9 @@ AZURE_OPENAI_DEPLOYMENT_MAP={"gpt-4o":"<你的4o部署名>", "gpt-4o-mini":"<你
 # MYSQL_USER=ledger_user
 # MYSQL_PASSWORD=ledger123
 # MYSQL_CHARSET=utf8mb4
+# 长期记忆（LangGraph Store）建议使用 Postgres：
+# STORE_DIALECT=postgres
+# PG_CONN_STR=postgresql://postgres:pass@localhost:15432/postgres
 ```
 
 2) 安装依赖并创建虚拟环境
@@ -181,6 +185,17 @@ uv run python
 
 - 默认：SQLite（文件 `ledger.db`）。
 - 可选：MySQL（设置 `DB_DIALECT=mysql` 与 `MYSQL_*`）。
+- 长期记忆 Store：推荐设置 `STORE_DIALECT=postgres` 并提供 `PG_CONN_STR`；这是 LangGraph 在本项目中存储记忆向量的后端。
+  - 快速启动（Docker）：
+
+    ```bash
+    docker run -d --name pgvec \
+      -e POSTGRES_PASSWORD=pass \
+      -p 15432:5432 \
+      pgvector/pgvector:pg16
+    ```
+
+  - 将容器地址写入 `.env` 中的 `PG_CONN_STR=postgresql://postgres:pass@localhost:15432/postgres` 后，Agent 会自动创建/使用 `PostgresStore`。
 - 表结构（两种后端语义一致）：
   - `occurred_at`（到分钟）、`item`、`amount_cents`、`currency`、`type`（expense/income）、`category`、`merchant`、`note`、`source_message`、`created_at`。
 
