@@ -1,4 +1,4 @@
-from typing import Literal, Optional, TypedDict
+from typing import Any, Literal, Optional, TypedDict
 from langchain_core.messages import AIMessage, SystemMessage, HumanMessage, BaseMessage, ToolMessage
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, MessagesState, StateGraph, START
@@ -42,6 +42,8 @@ class AgentState(MessagesState):
     draft: Optional[dict]  # 信息不完整的草稿
     validated: Optional[bool]  # 是否验证通过
     db_result: Optional[DBResult]  # 数据库写入结果
+    query_plan: Optional[dict]  # 查询计划
+    query_result: Optional[dict]  # 查询结果
 
 
 # 工具
@@ -73,19 +75,24 @@ def route_after_fill(state: AgentState) -> str:
     return "validate" if state.get("parsed") else "respond"
 
 # 意图分类
-classify_instructions = """你是一个记账助手，你需要判断用户的输入有没有"""
+classify_instructions = """你是记账助手，需要为用户的输入判定意图标签：
+- log_expense：描述新的收支记录（“买了/花了/收入/转账”）。
+- query_summary：询问历史收支统计或明细（“过去一周早餐花了多少”“最近三次买咖啡”）。
+- related_chat：围绕已记录内容的闲聊、追问或复述，但无新统计需求。
+- other：其余与记账无关或无法判断的内容。
+请只输出提供的标签之一，不要新造标签。"""
 
 # 意图分类模型
 class IntentOut(BaseModel):
     """记账意图分类输出"""
-    # 只允许这两个标签，中文描述清楚边界，避免模型自创标签
-    intent: Literal["log_expense", "related_chat", "other"] = Field(
+    intent: Literal["log_expense", "query_summary", "related_chat", "other"] = Field(
         ...,
         description="""
-        用户意图说话内容判断。
-        1. 如果是新的可入账的收支类描述，如“花了/买了/收入/转账/吃了”-> log_expense；
-        2. 用户仍在讨论已经记录过的消费内容，且并没有修改意图；或者任何和用户画像有关的内容。related_chat=是（如“我想聊聊这笔开销”，“我过去三天买早饭花了多少钱”）；
-        3. other谨慎使用，一般不确定的即归为2 related_chat。
+        用户意图分类：
+        - log_expense：新的可入账收支描述。
+        - query_summary：询问历史收支统计或需要数据库检索的汇总问题。
+        - related_chat：围绕既有记录或偏好闲聊，未请求数据库查询。
+        - other：其余与记账无关或含义不明确的内容。
         """
     )
 
@@ -124,6 +131,8 @@ def route_after_classify(state: AgentState) -> str:
     intent = state.get("intent")
     if intent == "log_expense":
         return "extract"
+    if intent == "query_summary":
+        return "plan_query"
     if intent == "related_chat":
         return "respond_related"
     return "respond"
@@ -168,6 +177,128 @@ extract_instructions = """你是中文记账抽取助手。把用户的消费描
 - category, merchant, note: 可留空
 
 只输出 JSON，不要多余文本。"""
+
+
+# 查询意图解析模型与提示词
+class QueryExpenseOut(BaseModel):
+    """查询类问题的结构化计划"""
+
+    metric: Literal["sum", "avg", "count", "list"] = Field(
+        ...,
+        description="聚合目标，sum=求总金额，avg=平均金额，count=条目数，list=返回明细。",
+    )
+    time_scope: str | None = Field(
+        default=None,
+        description="用户问题中的原始时间短语，如‘过去一周’。",
+    )
+    start_iso: str | None = Field(
+        default=None,
+        description="时间范围起点（含），ISO8601 日期，例 2024-03-11。",
+    )
+    end_iso: str | None = Field(
+        default=None,
+        description="时间范围终点（含），ISO8601 日期。",
+    )
+    item_keywords: list[str] = Field(
+        default_factory=list,
+        description="与消费条目相关的关键词列表（小写，便于 LIKE 查询）。",
+    )
+    categories: list[str] = Field(
+        default_factory=list,
+        description="用户提到的品类标签，如‘早餐’。",
+    )
+    merchants: list[str] = Field(
+        default_factory=list,
+        description="涉及的商家名称。",
+    )
+    notes: str | None = Field(
+        default=None,
+        description="其他可用于过滤的描述，如支付方式。",
+    )
+
+
+query_plan_instructions = """你是中文记账查询规划助手，需要把用户关于历史收支的提问解析成 JSON。
+字段要求：
+- metric: 选择 {"sum","avg","count","list"} 中最契合的问题需求。
+- time_scope: 填写用户的时间短语原文（如“过去一周”）；若未提到填 null。
+- start_iso / end_iso: 推理得到的闭区间起止日期（ISO8601，精确到日，缺失填 null；若只给具体日期就同一天）。
+- item_keywords: 归纳与消费条目相关的关键词列表（用原词或其小写形式）。
+- categories: 若提到如“早餐/房租/交通”等品类词，放入该数组；否则为空数组。
+- merchants: 出现具体商家时列出；否则为空数组。
+- notes: 其他能帮助数据库过滤的描述（如“微信”“公司报销”）；没有填 null。
+约束：
+1. 不要做金额运算或臆造字段。
+2. 未给出的字段填 null 或空列表。
+3. 输出必须是 JSON，禁止额外文本。
+"""
+
+
+def plan_query(state: AgentState, config: RunnableConfig) -> AgentState:
+    llm = get_model(config["configurable"].get("model", settings.DEFAULT_MODEL))
+    llm_struct = llm.with_structured_output(QueryExpenseOut)
+
+    user_text = next(m for m in reversed(state["messages"]) if isinstance(m, HumanMessage)).content
+
+    result: QueryExpenseOut = llm_struct.invoke([
+        SystemMessage(content=query_plan_instructions),
+        *assemble_context(state=state, window_strategy="turns", window_turns=6, include_system=False),
+        HumanMessage(content=user_text),
+    ])
+
+    audit = AIMessage(
+        content=f"[plan_query] metric={result.metric}, start={result.start_iso}, end={result.end_iso}, "
+        f"keywords={result.item_keywords}"
+    )
+
+    plan_dict = result.model_dump()
+    start_iso = plan_dict.get("start_iso")
+    end_iso = plan_dict.get("end_iso")
+    if start_iso and end_iso and end_iso < start_iso:
+        plan_dict["start_iso"], plan_dict["end_iso"] = end_iso, start_iso
+
+    return {
+        "messages": [audit],
+        "query_plan": plan_dict,
+        "query_result": None,
+    }
+
+
+def _iso_to_next_day(iso_date: str) -> str:
+    date_obj = dt.date.fromisoformat(iso_date)
+    return (date_obj + dt.timedelta(days=1)).isoformat()
+
+
+def run_query(state: AgentState, config: RunnableConfig) -> AgentState:
+    plan_state = state.get("query_plan") or {}
+    plan = dict(plan_state)
+    if not plan:
+        return {
+            "messages": [AIMessage(content="[run_query] skipped: empty plan")],
+            "query_result": {"status": "error", "message": "查询计划为空"},
+        }
+
+    start_iso = plan.get("start_iso")
+    end_iso = plan.get("end_iso")
+    if start_iso and end_iso and end_iso < start_iso:
+        start_iso, end_iso = end_iso, start_iso
+    if start_iso:
+        plan["start_iso"] = start_iso
+    if end_iso:
+        plan["end_iso"] = end_iso
+        plan.setdefault("_end_exclusive", _iso_to_next_day(end_iso))
+
+    try:
+        result = DB.summarize_transactions(plan)
+        audit_msg = f"[run_query] rows={result.get('total_rows', 0)} metric={result.get('metric')}"
+        return {
+            "messages": [AIMessage(content=audit_msg)],
+            "query_result": result,
+        }
+    except Exception as exc:
+        return {
+            "messages": [AIMessage(content=f"[run_query_error] {exc}")],
+            "query_result": {"status": "error", "message": str(exc)},
+        }
 
 
 # 信息提取节点
@@ -329,6 +460,13 @@ FINALIZE_SYS = """
 任务：基于以上信息，生成一条**给用户看的**自然中文回复（单条消息）。
 
 场景与要求（择一触发，按此优先级）：
+0) 若 state_snapshot.intent == "query_summary":
+   - 必须引用 state_snapshot.query_result 中的字段；禁止自行编造金额或条数。
+   - 若 query_result.status == "error"：简要说明无法查询的原因，并引导用户稍后再试或调整问题。
+   - 若 query_result.total_rows == 0：告诉用户未找到符合条件的记录，鼓励继续记账或尝试其它条件。
+   - 若存在金额字段：使用 query_result.total_amount_yuan（保留两位小数，前缀 ¥）。
+   - 如包含时间范围或关键词，可自然引用 query_plan/time_scope，帮助用户理解统计范围。
+   - 保持语气专业友好，可附一句关怀或建议。
 1) 若 state_snapshot.db_result.status == "inserted":
    - 生成确认语：包含 item、金额（用 ¥，两位小数）、时间（occurred_at 到分钟）。
    - 如有 merchant/category 可适度附加；语气简洁自然；不要出现方括号审计字样或字段名。
@@ -373,6 +511,8 @@ def respond(state: AgentState, config: RunnableConfig) -> AgentState:
         "db_result": state.get("db_result"),
         "draft": state.get("draft"),
         "parsed": state.get("parsed"),
+        "query_plan": state.get("query_plan"),
+        "query_result": state.get("query_result"),
     }
 
     tool_call_id = "final-ctx-0001"
@@ -391,7 +531,7 @@ def respond(state: AgentState, config: RunnableConfig) -> AgentState:
             tool_call_id=tool_call_id,
             content=json.dumps(snapshot, ensure_ascii=False),
         ),
-        HumanMessage(content="请基于以上历史与状态，查询历史消息，生成给用户看的最终一句回复。")
+        HumanMessage(content="请基于以上历史与状态，生成给用户看的最终一句回复。")
     ]
 
     try:
@@ -412,6 +552,10 @@ def respond(state: AgentState, config: RunnableConfig) -> AgentState:
     db = state.get("db_result") or {}
     if db.get("status") in ("inserted", "error"):
         out["db_result"] = {}
+
+    if state.get("query_result"):
+        out["query_result"] = None
+        out["query_plan"] = None
 
     return out
 
@@ -560,9 +704,11 @@ graph = StateGraph(AgentState)
 # 节点注册
 graph.add_node("entry", entry_node)
 graph.add_node("classify", classify_intent)
+graph.add_node("plan_query", plan_query)
 graph.add_node("extract", extract_struct)
 graph.add_node("validate", validate_normalize)
 graph.add_node("write_db", write_db)
+graph.add_node("run_query", run_query)
 graph.add_node("handle_fill", handle_fill)
 graph.add_node("respond", respond)
 graph.add_node("respond_related", respond_related)
@@ -584,10 +730,13 @@ graph.add_conditional_edges(
     route_after_classify,
     {
         "extract": "extract",
+        "plan_query": "plan_query",
         "respond_related": "respond_related",
         "respond": "respond",
     }
 )
+graph.add_edge("plan_query", "run_query")
+graph.add_edge("run_query", "respond")
 graph.add_edge("extract", "validate")
 graph.add_conditional_edges(
     "validate",
