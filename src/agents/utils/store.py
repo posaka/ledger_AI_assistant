@@ -11,14 +11,7 @@ index = {
     "embed": HuggingFaceEmbeddings(),
 }
 
-# class PgStoreHandle:
-#     def __init__(self, conn_str: str):
-#         self.conn_str = conn_str
-#         self.store = PostgresStore.from_conn_string(
-#             conn_string=conn_str,
-#             index=index,
-#         )
-#         self.store.setup()
+
 
 class PgStoreHandle:
     def __init__(self, conn_str, index=None):
