@@ -1,10 +1,11 @@
 from langchain_community.document_loaders import JSONLoader
 from langchain_core.documents import Document
 from langchain_chroma import Chroma
-from langchain_huggingface import HuggingFaceEmbeddings
 from langchain.tools.retriever import create_retriever_tool
 from typing import List
 import os
+from core import get_embeddings
+from langchain_core.embeddings import Embeddings
 
 # ===== Public API ======
 # 创建或更新向量数据库
@@ -18,7 +19,7 @@ def create_vector_db(
     sep: str = "\n",
     keep_tail: bool = True,
     mode: str = "upsert",
-    embedding: HuggingFaceEmbeddings = HuggingFaceEmbeddings()
+    embedding: Embeddings = get_embeddings()
 ):
     docs = load_docs_from_jsonl(
         jsonl_path=jsonl_path,
@@ -40,7 +41,7 @@ def create_vector_db(
     return vectorstore
 
 # 获取检索工具 在agent构建时调用，绑定到llm
-def get_retriever_tool(persist_directory, collection_name, embedding=HuggingFaceEmbeddings()):
+def get_retriever_tool(persist_directory, collection_name, embedding=get_embeddings):
     vectorstore = Chroma(
         embedding_function=embedding,
         persist_directory=persist_directory,
@@ -95,7 +96,7 @@ def upsert_docs_to_chroma(
     docs,
     persist_directory: str = "chroma_db",
     collection_name: str = "chat_history",
-    embedding=HuggingFaceEmbeddings(),
+    embedding=get_embeddings(),
     mode="upsert"
     ):
     # 如果路径不存在，则创建

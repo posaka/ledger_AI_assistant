@@ -1,14 +1,15 @@
 from langmem import create_manage_memory_tool, create_search_memory_tool
 from langgraph.store.postgres import PostgresStore
-from langchain_huggingface import HuggingFaceEmbeddings
 from langgraph.store.base import BaseStore
 from langgraph.store.memory import InMemoryStore
 from psycopg import Connection
 import os
+from core import get_embeddings
+
 
 index = {
     "dims": 1536,
-    "embed": HuggingFaceEmbeddings(),
+    "embed": get_embeddings(),
 }
 
 
