@@ -794,8 +794,8 @@ def _print_last_ai(state_out):
 if __name__ == "__main__":
 
     # 1) 可视化图结构
-    from draw_graph import draw_graph
-    draw_graph(app)
+    # from draw_graph import draw_graph
+    # draw_graph(app)
 
 
     # 2) 快速双步测试（缺金额 → 补金额 → 入库）
