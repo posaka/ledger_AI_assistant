@@ -27,6 +27,7 @@ dependencies = [
     "sentence-transformers>=5.1.0",
     "langgraph-checkpoint-postgres>=2.0.23",
     "streamlit>=1.50.0",
+    "memobase>=0.0.26",
 ]
 
 [tool.setuptools]

@@ -10,6 +10,8 @@ from agents.utils.chat_log import append_msg
 from agents.utils.rag_tool import get_retriever_tool
 from agents.utils.store import get_store
 from agents.utils.db_repo import get_db
+from agents.utils.user_profile import memobase_client, format_messages
+from memobase import ChatBlob
 from langchain_core.runnables import RunnableConfig, RunnableLambda, RunnableSerializable
 from pydantic import BaseModel, Field, ConfigDict, confloat
 import datetime as dt
@@ -518,6 +520,7 @@ def respond(state: AgentState, config: RunnableConfig) -> AgentState:
         "query_result": state.get("query_result"),
     }
 
+    user = memobase_client.get_user(config["configurable"]["user_id"])
     tool_call_id = "final-ctx-0001"
     msgs: list[BaseMessage] = [
         SystemMessage(content=FINALIZE_SYS),
@@ -534,6 +537,7 @@ def respond(state: AgentState, config: RunnableConfig) -> AgentState:
             tool_call_id=tool_call_id,
             content=json.dumps(snapshot, ensure_ascii=False),
         ),
+        SystemMessage(content=f"用户画像: {user.context()}"),
         HumanMessage(content="请基于以上历史与状态，生成给用户看的最终一句回复。")
     ]
 
@@ -559,6 +563,11 @@ def respond(state: AgentState, config: RunnableConfig) -> AgentState:
     if state.get("query_result"):
         out["query_result"] = None
         out["query_plan"] = None
+
+    # 生成用户画像
+    blob = ChatBlob(messages=format_messages(state["messages"] + out["messages"]))
+    user.insert(blob)
+    user.flush()
 
     return out
 

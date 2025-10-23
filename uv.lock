@@ -1552,6 +1552,7 @@ dependencies = [
     { name = "langgraph-checkpoint-postgres" },
     { name = "langmem" },
     { name = "matplotlib" },
+    { name = "memobase" },
     { name = "pillow" },
     { name = "psycopg", extra = ["binary", "pool"] },
     { name = "pydantic-settings" },
@@ -1578,6 +1579,7 @@ requires-dist = [
     { name = "langgraph-checkpoint-postgres", specifier = ">=2.0.23" },
     { name = "langmem", specifier = ">=0.0.29" },
     { name = "matplotlib", specifier = ">=3.10.6" },
+    { name = "memobase", specifier = ">=0.0.26" },
     { name = "pillow", specifier = ">=11.3.0" },
     { name = "psycopg", extras = ["binary", "pool"], specifier = ">=3.2.1" },
     { name = "pydantic-settings", specifier = ">=2.10.1" },
@@ -1709,6 +1711,20 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/d6/54/cfe61301667036ec958cb99bd3efefba235e65cdeb9c84d24a8293ba1d90/mdurl-0.1.2.tar.gz", hash = "sha256:bb413d29f5eea38f31dd4754dd7377d4465116fb207585f97bf925588687c1ba", size = 8729, upload-time = "2022-08-14T12:40:10.846Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b3/38/89ba8ad64ae25be8de66a6d463314cf1eb366222074cfda9ee839c56a4b4/mdurl-0.1.2-py3-none-any.whl", hash = "sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8", size = 9979, upload-time = "2022-08-14T12:40:09.779Z" },
+]
+
+[[package]]
+name = "memobase"
+version = "0.0.26"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpx" },
+    { name = "openai" },
+    { name = "pydantic" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b1/e8/00a684f982997f51298c277429fed9fa46963c1f7b87ae8f949c2a853fe6/memobase-0.0.26.tar.gz", hash = "sha256:5964d8207055cf826a26349d7f0bfa0e0102b43613090956dec397288bf591e6", size = 24920, upload-time = "2025-10-08T01:24:57.71Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c6/b0/203362469476c96c3fa3dfd6e9fa06f7d7f55a8a03af46da163cb85a7039/memobase-0.0.26-py3-none-any.whl", hash = "sha256:adab22d6a7729ffa452a4a6d7d314e7cf7bd085ecdcc5a0efbebe1b16fa23b53", size = 22895, upload-time = "2025-10-08T01:24:52.654Z" },
 ]
 
 [[package]]
