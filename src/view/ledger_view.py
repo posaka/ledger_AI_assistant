@@ -43,8 +43,5 @@ ledger_table = st.table(
     border="horizontal",
 )
 
-print(DB.get_month_consumption(2023, 7))
-
-
 
 
