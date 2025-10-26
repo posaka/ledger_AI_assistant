@@ -1,15 +1,8 @@
 import time
 
 import streamlit as st
-from langchain_core.messages import HumanMessage, AIMessage
-from agents.expense_tracker_agent import app, settings, _print_last_ai
-from agents.utils.user_profile import init_users, memobase_client
-from langchain_core.messages import HumanMessage
 from agents.expense_tracker_agent import app, settings, _print_last_ai, DB
 from agents.utils.user_profile import memobase_client
-
-st.title("智能账本")
-
 
 def _ensure_message_buffer() -> None:
     if "messages" not in st.session_state:
@@ -68,15 +61,6 @@ def _render_auth_panel() -> None:
                     else:
                         st.error("账号或密码不正确。")
 
-if "config" not in st.session_state:
-    uid = init_users()
-    st.session_state.config = {
-        "configurable": {
-            "model": settings.DEFAULT_MODEL,
-            "thread_id": st.session_state.thread_id,
-            "user_id": uid
-        }
-    }
     with register_tab:
         with st.form("register_form"):
             register_username = st.text_input("账号", key="register_username")
@@ -136,17 +120,3 @@ pages = [
 pg = st.navigation(pages)
 pg.run()
 
-if user_input := st.chat_input("请输入："):
-    st.session_state.messages.append({"role": "user", "content": user_input})
-    with st.chat_message("user"):
-        st.markdown(user_input)
-    with st.chat_message("assistant"):
-        with st.spinner("账账发力中..."):
-            response = app.invoke(
-                {"messages": [HumanMessage(content=user_input)]},
-                config=st.session_state.config,
-            )
-        reply = response["messages"][-1].content
-        st.write(reply)
-        st.session_state.messages.append({"role": "assistant", "content": reply})
-        _print_last_ai(response)
