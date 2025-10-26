@@ -18,7 +18,7 @@ monthly_consumption = {
 for m in range(1, 13):
     month_name = str(year) + "-" + str(m).zfill(2)
     y.append(month_name)
-    value = DB.get_month_consumption(year, m)
+    value = DB.get_month_consumption(year, m, st.session_state.user_id)
     monthly_consumption["value"].append(value)
 st.bar_chart(pd.DataFrame(monthly_consumption), x_label="月份", y_label="金额（元）", stack=False)
 
@@ -30,7 +30,7 @@ ledger_data = {
     "时间": []
 }
 
-for record in DB.get_all_transactions():
+for record in DB.get_all_transactions(st.session_state.user_id):
     ledger_data["名称"].append(record[3])
     ledger_data["金额"].append(int(record[4])/100)
     # ledger_data["分类"].append(record[6])
