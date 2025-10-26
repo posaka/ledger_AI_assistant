@@ -1,6 +1,10 @@
 from __future__ import annotations
 from typing import Protocol, Dict, Any
-import os, datetime as dt
+import os
+import datetime as dt
+import secrets
+import hashlib
+import hmac
 
 # 可选依赖：按需导入，避免无 MySQL 环境时报错
 try:
@@ -14,20 +18,47 @@ except Exception:
     pymysql = None
 
 
+def _generate_salt() -> str:
+    return secrets.token_hex(16)
+
+
+def _derive_password_hash(password: str, salt: str) -> str:
+    return hashlib.sha256((salt + password).encode("utf-8")).hexdigest()
+
+
+def _verify_password(password: str, salt: str, expected_hash: str) -> bool:
+    computed = _derive_password_hash(password, salt)
+    return hmac.compare_digest(computed, expected_hash)
+
+
 class LedgerDB(Protocol):
-    """数据库仓库统一接口（仅交易表）"""
+    """数据库仓库统一接口（交易表 + 用户表）"""
 
     def init(self) -> None: ...
-    def insert_transaction(self, p: Dict[str, Any]) -> int: ...
-    def summarize_transactions(self, plan: Dict[str, Any]) -> Dict[str, Any]: ...
+    def insert_transaction(self, user_id: str, p: Dict[str, Any]) -> int: ...
+    def summarize_transactions(self, user_id: str, plan: Dict[str, Any]) -> Dict[str, Any]: ...
+    def username_exists(self, username: str) -> bool: ...
+    def register_user(self, username: str, password: str, user_id: str) -> str: ...
+    def authenticate_user(self, username: str, password: str) -> str | None: ...
 
 
 # ---------------------------
 # SQLite 实现（仅 transactions）
 # ---------------------------
+CREATE_SQLITE_USERS = """
+CREATE TABLE IF NOT EXISTS users(
+  id TEXT PRIMARY KEY,
+  username TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  salt TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+"""
+
 CREATE_SQLITE_TRANSACTIONS = """
 CREATE TABLE IF NOT EXISTS transactions(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id TEXT NOT NULL,
   occurred_at TEXT NOT NULL,
   item TEXT NOT NULL,
   amount_cents INTEGER NOT NULL,
@@ -43,8 +74,8 @@ CREATE TABLE IF NOT EXISTS transactions(
 
 INSERT_SQLITE_TRANSACTION = """
 INSERT INTO transactions
-(occurred_at, item, amount_cents, currency, type, category, merchant, note, source_message, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+(user_id, occurred_at, item, amount_cents, currency, type, category, merchant, note, source_message, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 """
 
 class SQLiteLedgerDB:
@@ -58,14 +89,55 @@ class SQLiteLedgerDB:
 
     def init(self) -> None:
         with self._conn() as conn:
+            conn.execute(CREATE_SQLITE_USERS)
             conn.execute(CREATE_SQLITE_TRANSACTIONS)
 
-    def insert_transaction(self, p: Dict[str, Any]) -> int:
+    def username_exists(self, username: str) -> bool:
+        with self._conn() as conn:
+            cur = conn.execute(
+                "SELECT 1 FROM users WHERE username = ? LIMIT 1",
+                (username,),
+            )
+            return cur.fetchone() is not None
+
+    def register_user(self, username: str, password: str, user_id: str) -> str:
+        if not username or not password:
+            raise ValueError("username and password are required")
+        if not user_id:
+            raise ValueError("user_id is required for registering a user")
+        salt = _generate_salt()
+        password_hash = _derive_password_hash(password, salt)
+        created_at = dt.datetime.now().isoformat(timespec="seconds")
+        with self._conn() as conn:
+            conn.execute(
+                "INSERT INTO users (id, username, password_hash, salt, created_at) VALUES (?, ?, ?, ?, ?)",
+                (str(user_id), username, password_hash, salt, created_at),
+            )
+        return str(user_id)
+
+    def authenticate_user(self, username: str, password: str) -> str | None:
+        with self._conn() as conn:
+            cur = conn.execute(
+                "SELECT id, password_hash, salt FROM users WHERE username = ? LIMIT 1",
+                (username,),
+            )
+            row = cur.fetchone()
+        if not row:
+            return None
+        user_id, password_hash, salt = row
+        if _verify_password(password, str(salt), str(password_hash)):
+            return str(user_id)
+        return None
+
+    def insert_transaction(self, user_id: str, p: Dict[str, Any]) -> int:
+        if not user_id:
+            raise ValueError("user_id is required for inserting a transaction")
         created_at = dt.datetime.now().isoformat(timespec="seconds")
         with self._conn() as conn:
             cur = conn.execute(
                 INSERT_SQLITE_TRANSACTION,
                 (
+                    str(user_id),
                     p["occurred_at"],
                     p["item"],
                     int(p["amount_cents"]),
@@ -98,10 +170,12 @@ class SQLiteLedgerDB:
         end_date = dt.date.fromisoformat(date_str) + dt.timedelta(days=1)
         return f"{end_date.isoformat()}T00:00"
 
-    def summarize_transactions(self, plan: Dict[str, Any]) -> Dict[str, Any]:
+    def summarize_transactions(self, user_id: str, plan: Dict[str, Any]) -> Dict[str, Any]:
+        if not user_id:
+            raise ValueError("user_id is required for summarizing transactions")
         metric = (plan.get("metric") or "sum").lower()
-        where: list[str] = []
-        params: list[Any] = []
+        where: list[str] = ["user_id = ?"]
+        params: list[Any] = [str(user_id)]
 
         start_bound = self._start_bound(plan.get("start_iso"))
         if start_bound:
@@ -214,9 +288,21 @@ class SQLiteLedgerDB:
 # ---------------------------
 # MySQL 实现（仅 transactions）
 # ---------------------------
+CREATE_MYSQL_USERS = """
+CREATE TABLE IF NOT EXISTS users (
+  id VARCHAR(64) PRIMARY KEY,
+  username VARCHAR(64) NOT NULL UNIQUE,
+  password_hash VARCHAR(128) NOT NULL,
+  salt VARCHAR(64) NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_username (username)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+"""
+
 CREATE_MYSQL_TRANSACTIONS = """
 CREATE TABLE IF NOT EXISTS transactions (
   id INT PRIMARY KEY AUTO_INCREMENT,
+  user_id VARCHAR(64) NOT NULL,
   occurred_at DATETIME NOT NULL,
   item VARCHAR(64) NOT NULL,
   amount_cents INT UNSIGNED NOT NULL,
@@ -227,6 +313,7 @@ CREATE TABLE IF NOT EXISTS transactions (
   note VARCHAR(255) NULL,
   source_message TEXT NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_user_occ (user_id, occurred_at),
   INDEX idx_occurred_at (occurred_at),
   INDEX idx_type_occ (`type`, occurred_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -234,8 +321,13 @@ CREATE TABLE IF NOT EXISTS transactions (
 
 INSERT_MYSQL_TRANSACTION = """
 INSERT INTO transactions
-(occurred_at, item, amount_cents, currency, `type`, category, merchant, note, source_message, created_at)
-VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
+(user_id, occurred_at, item, amount_cents, currency, `type`, category, merchant, note, source_message, created_at)
+VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
+"""
+
+INSERT_MYSQL_USER = """
+INSERT INTO users (id, username, password_hash, salt, created_at)
+VALUES (%s, %s, %s, %s, %s);
 """
 
 
@@ -267,10 +359,54 @@ class MySQLLedgerDB:
     def init(self) -> None:
         with self._conn() as conn:
             with conn.cursor() as cur:
+                cur.execute(CREATE_MYSQL_USERS)
                 cur.execute(CREATE_MYSQL_TRANSACTIONS)
             conn.commit()
 
-    def insert_transaction(self, p: Dict[str, Any]) -> int:
+    def username_exists(self, username: str) -> bool:
+        with self._conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT 1 FROM users WHERE username = %s LIMIT 1",
+                    (username,),
+                )
+                row = cur.fetchone()
+        return row is not None
+
+    def register_user(self, username: str, password: str, user_id: str) -> str:
+        if not username or not password:
+            raise ValueError("username and password are required")
+        if not user_id:
+            raise ValueError("user_id is required for registering a user")
+        salt = _generate_salt()
+        password_hash = _derive_password_hash(password, salt)
+        created_at = dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with self._conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    INSERT_MYSQL_USER,
+                    (str(user_id), username, password_hash, salt, created_at),
+                )
+            conn.commit()
+        return str(user_id)
+
+    def authenticate_user(self, username: str, password: str) -> str | None:
+        with self._conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT id, password_hash, salt FROM users WHERE username = %s LIMIT 1",
+                    (username,),
+                )
+                row = cur.fetchone()
+        if not row:
+            return None
+        if _verify_password(password, str(row["salt"]), str(row["password_hash"])):
+            return str(row["id"])
+        return None
+
+    def insert_transaction(self, user_id: str, p: Dict[str, Any]) -> int:
+        if not user_id:
+            raise ValueError("user_id is required for inserting a transaction")
         occurred_at_dt = self._to_mysql_dt(p["occurred_at"])
         created_at = dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with self._conn() as conn:
@@ -278,6 +414,7 @@ class MySQLLedgerDB:
                 cur.execute(
                     INSERT_MYSQL_TRANSACTION,
                     (
+                        str(user_id),
                         occurred_at_dt,
                         p["item"],
                         int(p["amount_cents"]),
@@ -314,10 +451,12 @@ class MySQLLedgerDB:
             dt_obj = dt.datetime.fromisoformat(f"{date_str}T00:00") + dt.timedelta(days=1)
         return dt_obj.strftime("%Y-%m-%d %H:%M:%S")
 
-    def summarize_transactions(self, plan: Dict[str, Any]) -> Dict[str, Any]:
+    def summarize_transactions(self, user_id: str, plan: Dict[str, Any]) -> Dict[str, Any]:
+        if not user_id:
+            raise ValueError("user_id is required for summarizing transactions")
         metric = (plan.get("metric") or "sum").lower()
-        where: list[str] = []
-        params: list[Any] = []
+        where: list[str] = ["user_id = %s"]
+        params: list[Any] = [str(user_id)]
 
         start_bound = self._start_bound(plan.get("start_iso"))
         if start_bound:

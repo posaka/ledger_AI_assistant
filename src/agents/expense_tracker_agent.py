@@ -28,6 +28,22 @@ DB.init()
 store = get_store()
 
 
+def _get_user_id(config: RunnableConfig) -> str:
+    configurable = {}
+    if isinstance(config, dict):
+        configurable = config.get("configurable") or {}
+    else:
+        get_callable = getattr(config, "get", None)
+        if callable(get_callable):
+            configurable = get_callable("configurable") or {}
+        if not configurable:
+            configurable = getattr(config, "configurable", {}) or {}
+    user_id = configurable.get("user_id")
+    if not user_id:
+        raise ValueError("configurable.user_id must be provided")
+    return str(user_id)
+
+
 
 # 数据库写入结果类型
 class DBResult(TypedDict, total=False):
@@ -292,7 +308,8 @@ def run_query(state: AgentState, config: RunnableConfig) -> AgentState:
         plan.setdefault("_end_exclusive", _iso_to_next_day(end_iso))
 
     try:
-        result = DB.summarize_transactions(plan)
+        user_id = _get_user_id(config)
+        result = DB.summarize_transactions(user_id, plan)
         audit_msg = f"[run_query] rows={result.get('total_rows', 0)} metric={result.get('metric')}"
         return {
             "messages": [AIMessage(content=audit_msg)],
@@ -438,7 +455,8 @@ def write_db(state: AgentState, config: RunnableConfig) -> AgentState:
     p = dict(state["parsed"])  # 复制一份，避免副作用
 
     try:
-        txn_id = DB.insert_transaction(p)
+        user_id = _get_user_id(config)
+        txn_id = DB.insert_transaction(user_id, p)
 
         return {
             "messages": [AIMessage(content=f"[db] inserted id={txn_id}")],
