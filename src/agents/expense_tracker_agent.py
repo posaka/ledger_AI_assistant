@@ -185,13 +185,13 @@ class ExtractOut(BaseModel):
     merchant: Optional[str] = Field(default=None)
     note: Optional[str] = Field(default=None)
 
-extract_instructions = """你是中文记账抽取助手。把用户的消费描述解析为结构化JSON。
+extract_instructions = f"""你是中文记账抽取助手。把用户的消费描述解析为结构化JSON。其中，当前的时间为{dt.datetime.now().isoformat(timespec='minutes')}
 遵循下面字段：
 - item: 商品/消费内容的简短名称（尽量2~6个字，如“早餐”“哑铃”）。无法确定可留空。
 - amount: 金额（单位元，浮点数，大于0）。无法确定可留空。
 - currency: 默认 "CNY"
-- occurred_at_text: 原始时间短语（如“今天早上”“刚刚”），没有可留空
-- occurred_at_iso: 若能确定具体时间，用 ISO8601 到分钟；否则留空
+- occurred_at_text: 用户消息中的原始时间短语（如“今天早上”“刚刚”），没有可留空
+- occurred_at_iso: 若能根据用户消息确定具体时间，用 ISO8601 到分钟；否则留空
 - category, merchant, note: 可留空
 
 只输出 JSON，不要多余文本。"""

@@ -306,8 +306,8 @@ class SQLiteLedgerDB:
         query = """
                 SELECT SUM(amount_cents)
                 FROM transactions
-                WHERE datetime(occurred_at) >= ? AND datetime(occurred_at) < ?
-                ORDER BY datetime(occurred_at) DESC \
+                WHERE occurred_at >= ? AND occurred_at < ?
+                ORDER BY occurred_at DESC \
                 """
 
         cursor = self._conn().cursor()
