@@ -3,9 +3,7 @@ from agents.expense_tracker_agent import DB
 import pandas as pd
 import datetime
 
-user_name = "user_name"
-
-st.title(f"{user_name}的账本")
+st.title(f"{st.session_state.username}的账本")
 
 current_year = datetime.datetime.now().year
 year = st.selectbox(
@@ -33,10 +31,10 @@ ledger_data = {
 }
 
 for record in DB.get_all_transactions():
-    ledger_data["名称"].append(record[2])
-    ledger_data["金额"].append(record[3]/100)
+    ledger_data["名称"].append(record[3])
+    ledger_data["金额"].append(int(record[4])/100)
     # ledger_data["分类"].append(record[6])
-    date, time = record[1].split("T")
+    date, time = record[2].split("T")
     ledger_data["日期"].append(date)
     ledger_data["时间"].append(time)
 
