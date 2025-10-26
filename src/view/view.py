@@ -1,6 +1,9 @@
 import time
 
 import streamlit as st
+from langchain_core.messages import HumanMessage, AIMessage
+from agents.expense_tracker_agent import app, settings, _print_last_ai
+from agents.utils.user_profile import init_users, memobase_client
 from langchain_core.messages import HumanMessage
 from agents.expense_tracker_agent import app, settings, _print_last_ai, DB
 from agents.utils.user_profile import memobase_client
@@ -65,6 +68,15 @@ def _render_auth_panel() -> None:
                     else:
                         st.error("账号或密码不正确。")
 
+if "config" not in st.session_state:
+    uid = init_users()
+    st.session_state.config = {
+        "configurable": {
+            "model": settings.DEFAULT_MODEL,
+            "thread_id": st.session_state.thread_id,
+            "user_id": uid
+        }
+    }
     with register_tab:
         with st.form("register_form"):
             register_username = st.text_input("账号", key="register_username")
@@ -116,6 +128,13 @@ with st.sidebar:
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
+
+pages = [
+    st.Page(".\conversation_view.py", title="智能助手"),
+    st.Page(".\ledger_view.py", title="账本"),
+]
+pg = st.navigation(pages)
+pg.run()
 
 if user_input := st.chat_input("请输入："):
     st.session_state.messages.append({"role": "user", "content": user_input})

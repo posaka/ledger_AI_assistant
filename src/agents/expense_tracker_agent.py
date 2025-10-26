@@ -828,15 +828,16 @@ if __name__ == "__main__":
     # 2) 快速双步测试（缺金额 → 补金额 → 入库）
     print(">>> 快速测试：缺金额 → 补金额")
     tid = f"demo-{int(time.time())}"
+    config = {"configurable": {"model": settings.DEFAULT_MODEL, "thread_id": tid}}
     out1 = app.invoke(
         {"messages": [HumanMessage(content="我早上买了早餐")]},
-        config={"configurable": {"model": settings.DEFAULT_MODEL, "thread_id": tid}},
+        config=config,
     )
     _print_last_ai(out1)
 
     out2 = app.invoke(
         {"messages": [HumanMessage(content="10元")]},
-        config={"configurable": {"model": settings.DEFAULT_MODEL, "thread_id": tid}},
+        config=config,
     )
     _print_last_ai(out2)
 
@@ -862,7 +863,7 @@ if __name__ == "__main__":
 
         out = app.stream(
             {"messages": [HumanMessage(content=text)]},
-            config={"configurable": {"model": settings.DEFAULT_MODEL, "thread_id": thread_id}},
+            config=config,
             stream_mode="values"
         )
         #_print_last_ai(out)

@@ -283,6 +283,41 @@ class SQLiteLedgerDB:
             result["end_iso"] = plan.get("end_iso")
         return result
 
+    def get_all_transactions(self):
+        query = """
+                SELECT *
+                FROM transactions
+                ORDER BY datetime(occurred_at) DESC \
+                """
+
+        cursor = self._conn().cursor()
+        cursor.execute(query)
+        all_data = cursor.fetchall()
+
+        return all_data
+
+    def get_month_consumption(self, year: int, month: int):
+        start_date = f"{year}-{month:02d}-01T00:00"
+        if month == 12:
+            end_date = f"{year + 1}-01-01T00:00"
+        else:
+            end_date = f"{year}-{month + 1:02d}-01T00:00"
+
+        query = """
+                SELECT SUM(amount_cents)
+                FROM transactions
+                WHERE datetime(occurred_at) >= ? AND datetime(occurred_at) < ?
+                ORDER BY datetime(occurred_at) DESC \
+                """
+
+        cursor = self._conn().cursor()
+        cursor.execute(query, (start_date, end_date))
+        month_data = cursor.fetchall()
+
+        if month_data[0][0] is None:
+            return 0
+        return month_data[0][0] / 100
+
 
 
 # ---------------------------
