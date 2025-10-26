@@ -8,7 +8,6 @@ def _ensure_message_buffer() -> None:
     if "messages" not in st.session_state:
         st.session_state.messages = []
 
-
 def _reset_auth_state() -> None:
     st.session_state.authenticated = False
     st.session_state.username = None
@@ -108,10 +107,6 @@ with st.sidebar:
     st.markdown(f"**当前账号：** {st.session_state.username}")
     if st.button("退出登录", key="logout_button"):
         _logout()
-
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
 
 pages = [
     st.Page(".\conversation_view.py", title="智能助手"),

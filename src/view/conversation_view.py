@@ -1,6 +1,5 @@
 import streamlit as st
 from agents.expense_tracker_agent import app, _print_last_ai
-from agents.utils.user_profile import memobase_client
 from langchain_core.messages import HumanMessage
 st.title("智能记账助手")
 
@@ -18,7 +17,7 @@ if user_input := st.chat_input("请输入："):
         st.markdown(user_input)
     # Display assistant response in chat message container
     with st.chat_message("assistant"):
-        with st.spinner("账账发力中..."):
+        with st.spinner("账账发力中...（暂时不要离开这个界面哦）"):
             response = app.invoke(
                 {"messages": [HumanMessage(content=user_input)]},
                 config=st.session_state.config
