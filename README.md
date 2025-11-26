@@ -154,7 +154,7 @@
 
 - **MemoBase 调试**  
   ```bash
-  uv run python src/scripts/user_profile.py
+  uv run python src/scripts/test_user_profile.py
   ```
 
 ## 常见问题

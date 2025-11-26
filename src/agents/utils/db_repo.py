@@ -305,19 +305,17 @@ class SQLiteLedgerDB:
             end_date = f"{year}-{month + 1:02d}-01T00:00"
 
         query = """
-                SELECT SUM(amount_cents)
+                SELECT COALESCE(SUM(amount_cents), 0)
                 FROM transactions
                 WHERE occurred_at >= ? AND occurred_at < ? AND user_id = ?
-                ORDER BY occurred_at DESC \
                 """
 
-        cursor = self._conn().cursor()
-        cursor.execute(query, (start_date, end_date, user_id))
-        month_data = cursor.fetchall()
+        with self._conn() as conn:
+            cur = conn.execute(query, (start_date, end_date, str(user_id)))
+            row = cur.fetchone()
 
-        if month_data[0][0] is None:
-            return 0
-        return month_data[0][0] / 100
+        total_cents = int(row[0]) if row and row[0] is not None else 0
+        return total_cents / 100
 
 
 
