@@ -109,8 +109,8 @@ with st.sidebar:
         _logout()
 
 pages = [
-    st.Page(".\conversation_view.py", title="智能助手"),
-    st.Page(".\ledger_view.py", title="账本"),
+    st.Page("./conversation_view.py", title="智能助手"),
+    st.Page("./ledger_view.py", title="账本"),
 ]
 pg = st.navigation(pages)
 pg.run()

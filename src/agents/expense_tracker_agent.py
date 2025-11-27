@@ -11,6 +11,7 @@ from agents.utils.rag_tool import get_retriever_tool
 from agents.utils.store import get_store
 from agents.utils.db_repo import get_db
 from agents.utils.user_profile import memobase_client, format_messages
+from agents.utils.search import generate_recommendation
 from memobase import ChatBlob
 from langchain_core.runnables import RunnableConfig, RunnableLambda, RunnableSerializable
 from pydantic import BaseModel, Field, ConfigDict, confloat
@@ -62,6 +63,9 @@ class AgentState(MessagesState):
     db_result: Optional[DBResult]  # 数据库写入结果
     query_plan: Optional[dict]  # 查询计划
     query_result: Optional[dict]  # 查询结果
+    user_profile: Optional[str]  # 用户画像文本
+    recommendation: Optional[str]  # 搜索推荐文本
+
 
 
 # 工具
@@ -155,6 +159,32 @@ def route_after_classify(state: AgentState) -> str:
         return "respond_related"
     return "respond"
 
+class AdditionalInfo(BaseModel):
+    """供相关聊天使用的附加信息结构化判断"""
+    profile: bool = Field(
+        default=False,
+        description="如果用户上一条消息中包含个人信息关键词（如“我喜欢”“我的偏好”“联系方式”等），设为True"
+    )
+    search: bool = Field(
+        default=False,
+        description="如果用户近期对话中多次提到相似主题，则需要搜索该主题并生成推荐，设该项为True"
+    )
+
+def judge_additional_info(state: AgentState, config: RunnableConfig) -> AdditionalInfo:
+    llm = get_model(config["configurable"].get("model", settings.DEFAULT_MODEL))
+    llm_struct = llm.with_structured_output(AdditionalInfo)
+
+    result = llm_struct.invoke([SystemMessage(content="""
+        你是记账助手的附加信息判断模块。请根据以下要求判断用户最新消息中是否包含需要额外处理的信息：
+        - profile：如果用户最新消息中包含个人信息关键词（如“我喜欢”“我的偏好”“联系方式”等），则设为True。
+        - search：如果用户近期对话中多次提到相似主题，则需要搜索该主题并生成推荐，设该项为True。
+        以下为用户的消息历史，请根据这些消息进行判断。""")] + state["messages"])
+
+    if result.profile:
+        print("profile added")
+    if result.search:
+        print("search recommendation added")
+    return result
 
 def respond_related(state: AgentState, config: RunnableConfig) -> AgentState:
     """
@@ -163,12 +193,22 @@ def respond_related(state: AgentState, config: RunnableConfig) -> AgentState:
     llm = get_model(config["configurable"].get("model", settings.DEFAULT_MODEL))
     llm = llm.bind_tools(tools)
 
+    additional_info = judge_additional_info(state, config)
+    prompt = RELATED_CHAT_SYS
+    if additional_info.profile:
+        user = memobase_client.get_user(config["configurable"].get("user_id"))
+        prompt += f"\n请结合用户的个人信息进行回答。用户画像如下：{user.context()}"
     msgs: list[BaseMessage] = [
-        SystemMessage(content=RELATED_CHAT_SYS),
+        SystemMessage(content=prompt),
         *assemble_context(state=state, window_strategy="turns", window_turns=6, include_system=False),
     ]
 
     ai = llm.invoke(msgs)
+    if additional_info.search:
+        rec = generate_recommendation(format_messages(state["messages"]), llm)
+        return {
+            "messages": [AIMessage(content=ai.content + rec)],
+        }
     return {"messages": [ai]}
 
 # 信息提取模型与提示词
@@ -468,11 +508,6 @@ def write_db(state: AgentState, config: RunnableConfig) -> AgentState:
             "db_result": {"status": "error", "error": str(e)},
         }
 
-
-
-
-
-
 # —— Respond 辅助：提示词 & 摘要 —— 
 FINALIZE_SYS = """
 你是记账助手的“最终回复生成器（finalizer）”。你会看到：
@@ -515,9 +550,6 @@ FINALIZE_SYS = """
 - 口语化、清爽、无前缀、无列表、无内部术语；不要暴露审计标签或内部字段名。
 """
 
-
-
-
 def respond(state: AgentState, config: RunnableConfig) -> AgentState:
     """
     统一出口：交给 LLM（finalizer）根据完整历史+状态快照生成“用户可见”的最终一句。
@@ -536,9 +568,10 @@ def respond(state: AgentState, config: RunnableConfig) -> AgentState:
         "parsed": state.get("parsed"),
         "query_plan": state.get("query_plan"),
         "query_result": state.get("query_result"),
+        "recommendation": state.get("recommendation"),
+        "user_profile": state.get("user_profile"),
     }
 
-    user = memobase_client.get_user(config["configurable"]["user_id"])
     tool_call_id = "final-ctx-0001"
     msgs: list[BaseMessage] = [
         SystemMessage(content=FINALIZE_SYS),
@@ -555,16 +588,25 @@ def respond(state: AgentState, config: RunnableConfig) -> AgentState:
             tool_call_id=tool_call_id,
             content=json.dumps(snapshot, ensure_ascii=False),
         ),
-        SystemMessage(content=f"用户画像: {user.context()}"),
-        HumanMessage(content="请基于以上历史与状态，生成给用户看的最终一句回复。")
     ]
+    if state.get("user_profile") is not None:
+        msgs.append(SystemMessage(content=state.get("user_profile")))
+    msgs.append(HumanMessage(content="请基于以上历史与状态，生成给用户看的最终一句回复。"))
 
+    out = {}
     try:
+        additional_info = judge_additional_info(state, config)
+        if additional_info.profile:
+            user = memobase_client.get_user(config["configurable"].get("user_id"))
+            msgs += [SystemMessage(content=f"请结合用户的个人信息进行回答。用户画像如下：{user.context()}")]
         msg = llm.invoke(msgs)
         if msg.additional_kwargs.get("tool_calls"): return {"messages": [msg]}
-        out = {
-            "messages": [AIMessage(content=msg.content, additional_kwargs={"visibility": "user"})]
-        }
+
+        out_content = msg.content
+        if additional_info.search:
+            rec = generate_recommendation(state["messages"], llm)
+            out_content += "\n\n" + rec
+        out = {"messages": [AIMessage(content=out_content)]}
         append_msg("assistant", msg.content)
     except Exception:
         # 兜底：极少数情况下 LLM 异常，用一个通用模板
@@ -583,6 +625,7 @@ def respond(state: AgentState, config: RunnableConfig) -> AgentState:
         out["query_plan"] = None
 
     # 生成用户画像
+    user = memobase_client.get_user(config["configurable"]["user_id"])
     blob = ChatBlob(messages=format_messages(state["messages"] + out["messages"]))
     user.insert(blob)
     user.flush()
